@@ -1,0 +1,51 @@
+name: Build plugins
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows (VST3 + Standalone)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Collect plugins
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem build/plugins -Recurse -Directory -Filter *.vst3 |
+            Where-Object { $_.FullName -match 'Release\\VST3' } |
+            ForEach-Object { Copy-Item $_.FullName -Destination dist -Recurse }
+          Get-ChildItem build/plugins -Recurse -Filter *.exe |
+            Where-Object { $_.FullName -match 'Release\\Standalone' } |
+            Copy-Item -Destination dist
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synths-windows
+          path: dist
+
+  linux:
+    name: Linux (compile check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxcomposite-dev libxext-dev
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --target Squelch_VST3 Mira_VST3
