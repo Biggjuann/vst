@@ -5,6 +5,8 @@ Soft synths (VST3) for Ableton Live, built with [JUCE](https://juce.com) and CMa
 | Plugin | What it is |
 |---|---|
 | **Squelch** | Monophonic acid bass in the spirit of the classic silver bass box: saw/square oscillator, resonant 4-pole filter, accent and slide. |
+| **Octo** | Drum machine modelled on the classic analog rhythm composer (808-style): all 16 voices with their original controls, plus a TR-style step sequencer. |
+| **Nona** | Drum machine modelled on the classic hybrid rhythm composer (909-style): all 11 voices with their original controls, plus a TR-style step sequencer with shuffle. |
 | **Mira** | 8-voice virtual-analog polysynth going for a thick, warm "expensive analog" sound: 2 oscillators + sub + noise, saturating zero-delay-feedback ladder filter, analog-style envelopes, per-voice drift. |
 
 Both are original code (no third-party synth code or assets), so they're yours to change however you like.
@@ -14,7 +16,7 @@ Both are original code (no third-party synth code or assets), so they're yours t
 ### Option A: download a build from GitHub (no tools needed)
 1. On GitHub, open the **Actions** tab, then the latest green **Build plugins** run.
 2. Download the **synths-windows** artifact and unzip it.
-3. Copy `Squelch.vst3` and `Mira.vst3` into `C:\Program Files\Common Files\VST3\`.
+3. Copy the `.vst3` folders (`Squelch`, `Mira`, `Octo`, `Nona`) into `C:\Program Files\Common Files\VST3\`.
 4. In Ableton: **Options → Preferences → Plug-Ins**, turn on **Use VST3 Plug-In System Folders**, then click **Rescan**.
 5. They show up in the browser under **Plug-Ins → VST3 → Homebrew**.
 
@@ -82,6 +84,33 @@ To use it in Ableton: put Squelch on a MIDI track, press **RUN** (with Clock on 
 
 The classic sound: Cutoff low, Resonance high, Env Mod around 50–70 %, Decay short, then tweak Cutoff and Env Mod live.
 
+## Octo and Nona (drum machines)
+
+### Sounds
+Each voice is modelled on how the original circuit makes its sound, not on samples:
+
+**Octo, 808-style** (Bass Drum, Snare, Low/Mid/Hi Tom, Low/Mid/Hi Conga, Rim Shot, Claves, Hand Clap, Maracas, Cowbell, Cymbal, Open/Closed Hihat):
+- The kick is a resonator pinged at about 49 Hz, with the original's pitch "knock" at the start.
+- The snare has two resonators (180 and 330 Hz) plus snappy noise.
+- The clap is three bursts of noise plus a reverb tail.
+- The cowbell is two square waves at 540 and 800 Hz.
+- The cymbal and hats share **six square-wave oscillators** at the original's inharmonic frequencies, as the hardware does.
+
+Controls match the hardware: Level on every voice, Tone/Decay (BD), Tone/Snappy (SD), Tuning (toms and congas), Tone/Decay (cymbal), Decay (open hat).
+
+**Nona, 909-style** (Bass Drum, Snare, Low/Mid/Hi Tom, Rim Shot, Hand Clap, Closed/Open Hihat, Crash, Ride):
+- The analog kick, snare and toms are triangle oscillators with pitch sweeps, and the kick has Tune/Attack/Decay controls.
+- The original's hats and cymbals were 6-bit samples stored on chips. Those recordings can't be included, so they're synthesized and then run through a 6-bit, 32 kHz "sample" stage to get the same grit. Tune changes their playback rate, as on the original.
+
+On both, the closed hat cuts off the open hat, and **Accent** works as on the hardware: accented steps hit harder.
+
+### Playing them
+- **From MIDI clips or Ableton's Drum Rack layout:** C1 (36) Bass Drum, C#1 Rim Shot, D1 Snare, D#1 Clap, F1/G1 Low Tom, A1/B1 Mid Tom, C2/D2 Hi Tom, F#1 Closed Hat, A#1 Open Hat, C#2 Cymbal/Crash, D#2 Ride (Nona), G#2 Cowbell, D3/D#3/E3 Hi/Mid/Low Conga, A#3 Maracas, D#4 Claves (Octo). Velocity 100 is a normal hit, and 115 or higher is also accented.
+- **Built-in sequencer:** each instrument has a row of 16 steps, plus an **ACCENT** row. Click or drag to paint steps, and click an instrument name to hear it. RUN, Pattern (16 per instance, the first 6 hold demo beats), Length, Host sync / Internal clock and Copy/Paste work like Squelch's. **Shuffle** (Master section) delays the off-beat 16ths, up to a full triplet feel.
+
+### How close are they?
+They're modelled on published analyses of the original circuits: the frequencies, decay shapes and the way each sound is built. They aren't sample-identical copies of any particular hardware unit, since real units also differ from one another. The 909-style hats and cymbals are the furthest from the original, because the real ones were recordings.
+
 ## Mira
 
 ### Presets
@@ -117,6 +146,8 @@ CMakeLists.txt              top-level build (fetches JUCE 8)
 shared/dsp/                 reusable DSP: oscillators, ladder filter, envelopes, LFO, chorus
 shared/ui/                  data-driven knob-panel editor + parameter helpers
 plugins/Squelch/            acid bass + step sequencer (Sequencer.h, SequencerPanel.h) + generator (Generator.h)
+plugins/Octo/, plugins/Nona/ drum machines (Kit808.h / Kit909.h voice models)
+shared/drums/               drum engine: sequencer, pattern bank, step grid, drum DSP blocks
 plugins/Mira/               poly synth, presets (MiraPresets.cpp), Diva importer (DivaImporter.cpp)
 tests/                      developer tools: DivaConvert, GeneratorTest (cmake -DHOMEBREW_BUILD_TESTS=ON)
 .github/workflows/build.yml CI that builds the Windows VST3s

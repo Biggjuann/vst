@@ -48,4 +48,4 @@ jobs:
       - name: Configure
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build --target Squelch_VST3 Mira_VST3
+        run: cmake --build build --target Squelch_VST3 Mira_VST3 Octo_VST3 Nona_VST3
