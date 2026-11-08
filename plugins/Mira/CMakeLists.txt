@@ -12,7 +12,7 @@ juce_add_plugin(Mira
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES Instrument Synth)
 
-target_sources(Mira PRIVATE Source/PluginProcessor.cpp)
+target_sources(Mira PRIVATE Source/PluginProcessor.cpp Source/MiraPresets.cpp Source/DivaImporter.cpp)
 
 target_compile_definitions(Mira PUBLIC
     JUCE_WEB_BROWSER=0

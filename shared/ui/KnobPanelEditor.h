@@ -18,6 +18,19 @@ struct Section
 
 using Row = std::vector<Section>;
 
+/** Optional extra components: one on the right of the title bar, one under the knob rows. */
+struct EditorExtras
+{
+    std::unique_ptr<juce::Component> titleBar;
+    int titleBarWidth = 0;
+    std::unique_ptr<juce::Component> footer;
+    int footerHeight = 0;
+    int footerMinWidth = 0;
+    /** Optional file drag-and-drop onto the whole window. */
+    std::function<bool (const juce::StringArray&)> canDropFiles;
+    std::function<void (const juce::StringArray&)> filesDropped;
+};
+
 class SynthLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -33,6 +46,11 @@ public:
         setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff15171b));
         setColour (juce::PopupMenu::highlightedBackgroundColourId, accent.withAlpha (0.35f));
         setColour (juce::Label::textColourId, juce::Colours::white.withAlpha (0.65f));
+        setColour (juce::TextButton::buttonColourId, juce::Colour (0xff23272e));
+        setColour (juce::TextButton::buttonOnColourId, accent.withAlpha (0.85f));
+        setColour (juce::TextButton::textColourOffId, juce::Colours::white.withAlpha (0.85f));
+        setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        setColour (juce::ComboBox::buttonColourId, juce::Colour (0xff23272e));
     }
 
     void drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
@@ -68,18 +86,24 @@ public:
     juce::Colour accent;
 };
 
-class KnobPanelEditor : public juce::AudioProcessorEditor
+class KnobPanelEditor : public juce::AudioProcessorEditor, public juce::FileDragAndDropTarget
 {
 public:
     KnobPanelEditor (juce::AudioProcessor& owner, juce::AudioProcessorValueTreeState& stateToUse,
-                     juce::String titleToShow, std::vector<Row> rowsToShow, juce::Colour accentColour)
+                     juce::String titleToShow, std::vector<Row> rowsToShow, juce::Colour accentColour,
+                     EditorExtras extrasToUse = {})
         : AudioProcessorEditor (owner),
           state (stateToUse),
           title (std::move (titleToShow)),
           rows (std::move (rowsToShow)),
-          lnf (accentColour)
+          lnf (accentColour),
+          extras (std::move (extrasToUse))
     {
         setLookAndFeel (&lnf);
+        if (extras.titleBar != nullptr)
+            addAndMakeVisible (*extras.titleBar);
+        if (extras.footer != nullptr)
+            addAndMakeVisible (*extras.footer);
 
         int widest = 0;
         for (auto& row : rows)
@@ -94,14 +118,29 @@ public:
             widest = juce::jmax (widest, w - gap);
         }
 
-        const int height = headerHeight + (int) rows.size() * (rowHeight + gap) - gap + margin;
+        widest = juce::jmax (widest, extras.footerMinWidth);
+        const int footerSpace = extras.footer != nullptr ? extras.footerHeight + gap : 0;
+        const int height = headerHeight + (int) rows.size() * (rowHeight + gap) - gap + footerSpace + margin;
         setSize (widest + 2 * margin, height);
     }
 
     ~KnobPanelEditor() override
     {
+        extras.titleBar.reset();
+        extras.footer.reset();
         controls.clear();
         setLookAndFeel (nullptr);
+    }
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        return extras.canDropFiles != nullptr && extras.canDropFiles (files);
+    }
+
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        if (extras.filesDropped != nullptr)
+            extras.filesDropped (files);
     }
 
     void paint (juce::Graphics& g) override
@@ -168,6 +207,11 @@ public:
             }
             y += rowHeight + gap;
         }
+
+        if (extras.titleBar != nullptr)
+            extras.titleBar->setBounds (getWidth() - margin - extras.titleBarWidth, 10, extras.titleBarWidth, headerHeight - 20);
+        if (extras.footer != nullptr)
+            extras.footer->setBounds (margin, y, available, extras.footerHeight);
     }
 
 private:
@@ -237,6 +281,7 @@ private:
     SynthLookAndFeel lnf;
     std::map<juce::String, std::unique_ptr<Control>> controls;
     std::vector<SectionBox> sectionBoxes;
+    EditorExtras extras;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KnobPanelEditor)
 };

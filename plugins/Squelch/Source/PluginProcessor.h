@@ -5,6 +5,7 @@
 #include "dsp/Envelope.h"
 #include "dsp/LadderFilter.h"
 #include "dsp/Oscillator.h"
+#include "Sequencer.h"
 
 /**
     Squelch: a monophonic acid bass synth in the spirit of the classic silver bass box.
@@ -22,6 +23,7 @@ public:
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     using AudioProcessor::processBlock;
@@ -48,11 +50,23 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // ---- Step sequencer (shared with the editor) ----
+    seq::PatternBank patterns;
+    std::atomic<int> currentStep { -1 };     // step being played, -1 when stopped
+    std::atomic<int> playingPattern { 0 };   // pattern actually playing (changes on the downbeat)
+    std::atomic<int> transpose { 0 };        // set by MIDI keys while the sequencer runs
+
 private:
     void handleMidi (const juce::MidiMessage& m);
     void noteOn (int note, int velocity);
+    void startNote (int note, bool accent);
     void noteOff (int note);
+    void allNotesOff();
     void render (juce::AudioBuffer<float>& buffer, int start, int numSamples);
+
+    void processSequencer (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
+    void sequencerTick (int64_t tick);
+    void sequencerStop();
 
     struct Params
     {
@@ -67,7 +81,18 @@ private:
         std::atomic<float>* accentVel = nullptr;
         std::atomic<float>* drive = nullptr;
         std::atomic<float>* volume = nullptr;
+        std::atomic<float>* seqOn = nullptr;
+        std::atomic<float>* pattern = nullptr;
+        std::atomic<float>* length = nullptr;
+        std::atomic<float>* tempo = nullptr;
+        std::atomic<float>* clock = nullptr;
     } p;
+
+    // Sequencer runtime state (audio thread only)
+    bool seqWasOn = false, seqRunning = false, prevSlide = false;
+    int seqNote = -1, activePattern = 0;
+    int64_t lastTick = 0;
+    double expectedPpq = 0.0, internalPpq = 0.0;
 
     float sr = 44100.0f;
 

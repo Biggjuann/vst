@@ -28,3 +28,8 @@ target_include_directories(synth_shared INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/sh
 
 add_subdirectory(plugins/Squelch)
 add_subdirectory(plugins/Mira)
+
+option(HOMEBREW_BUILD_TESTS "Build developer test tools" OFF)
+if(HOMEBREW_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()

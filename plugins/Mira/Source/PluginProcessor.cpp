@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 
+#include "PresetBar.h"
 #include "ui/KnobPanelEditor.h"
 #include "ui/ParamHelpers.h"
 
@@ -14,7 +15,7 @@ static const juce::String fAttack { "fatt" }, fDecay { "fdec" }, fSustain { "fsu
 static const juce::String aAttack { "aatt" }, aDecay { "adec" }, aSustain { "asus" }, aRelease { "arel" };
 static const juce::String lfoShape { "lfoshape" }, lfoRate { "lforate" }, lfoPitch { "lfopitch" }, lfoFilter { "lfofilter" }, lfoPw { "lfopw" };
 static const juce::String voiceMode { "voicemode" }, glide { "glide" }, drift { "drift" }, velSens { "velsens" };
-static const juce::String spread { "spread" }, volume { "volume" };
+static const juce::String spread { "spread" }, volume { "volume" }, chorus { "chorus" };
 } // namespace ids
 
 MiraAudioProcessor::MiraAudioProcessor()
@@ -72,6 +73,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout MiraAudioProcessor::createPa
     l.add (makeFloat  (ids::velSens,   "Velocity", 0.0f, 1.0f, 0.5f, percent()));
     l.add (makeFloat  (ids::spread,    "Stereo Spread", 0.0f, 1.0f, 0.5f, percent()));
     l.add (makeFloat  (ids::volume,    "Volume", -36.0f, 6.0f, -6.0f, decibels()));
+    l.add (makeChoice (ids::chorus,    "Chorus", { "Off", "I", "II", "I+II" }, 0));
 
     return l;
 }
@@ -89,6 +91,7 @@ void MiraAudioProcessor::prepareToPlay (double sampleRate, int)
         voices[(size_t) i].prepare (sampleRate, 0x9E3779B9u * (uint32_t) (i + 1));
 
     lfo.prepare (sampleRate);
+    chorus.prepare (sampleRate);
     monoStack.clear();
     monoStack.reserve (128);
     sustainDown = false;
@@ -132,6 +135,7 @@ void MiraAudioProcessor::updateBlockParams()
     glideOn = glide > 0.001f;
     vp.glideCoef = glideOn ? 1.0f - std::exp (-3.0f / (glide * sr)) : 1.0f;
 
+    chorusMode = (int) param (ids::chorus);
     lfoShape = (int) param (ids::lfoShape);
     lfoRate = param (ids::lfoRate);
     vibratoDepth = 2.0f * param (ids::lfoPitch) + 0.5f * modWheel; // semitones
@@ -315,7 +319,8 @@ void MiraAudioProcessor::render (juce::AudioBuffer<float>& buffer, int start, in
 {
     auto* left  = buffer.getWritePointer (0);
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
-    constexpr float voiceMix = 0.35f;
+    // One voice in mono modes, up to eight in poly: give mono patches comparable loudness.
+    const float voiceMix = voiceMode == Poly ? 0.35f : 0.9f;
 
     for (int i = start; i < start + numSamples; ++i)
     {
@@ -329,14 +334,17 @@ void MiraAudioProcessor::render (juce::AudioBuffer<float>& buffer, int start, in
             v.render (l, r, voiceParams, mods);
 
         const float gain = gainSmooth.getNextValue() * voiceMix;
+        l *= gain;
+        r *= gain;
+        chorus.process (l, r, chorusMode);
         if (right != nullptr)
         {
-            left[i]  = l * gain;
-            right[i] = r * gain;
+            left[i]  = l;
+            right[i] = r;
         }
         else
         {
-            left[i] = 0.5f * (l + r) * gain;
+            left[i] = 0.5f * (l + r);
         }
     }
 }
@@ -352,9 +360,30 @@ juce::AudioProcessorEditor* MiraAudioProcessor::createEditor()
           { "Filter Envelope", { ids::fAttack, ids::fDecay, ids::fSustain, ids::fRelease } } },
         { { "Amp Envelope", { ids::aAttack, ids::aDecay, ids::aSustain, ids::aRelease } },
           { "LFO",          { ids::lfoShape, ids::lfoRate, ids::lfoPitch, ids::lfoFilter, ids::lfoPw } } },
-        { { "Voice",        { ids::voiceMode, ids::glide, ids::drift, ids::velSens, ids::spread, ids::volume } } },
+        { { "Voice",        { ids::voiceMode, ids::glide, ids::drift, ids::velSens, ids::spread } },
+          { "Output",       { ids::chorus, ids::volume } } },
     };
-    return new KnobPanelEditor (*this, apvts, "MIRA  /  analog poly", std::move (rows), juce::Colour (0xff4fd1c5));
+
+    EditorExtras extras;
+    auto bar = std::make_unique<PresetBar> (presets);
+    auto* barPtr = bar.get();
+    extras.titleBar = std::move (bar);
+    extras.titleBarWidth = 520;
+    extras.canDropFiles = [] (const juce::StringArray& files) { return PresetBar::canHandle (files); };
+    extras.filesDropped = [barPtr] (const juce::StringArray& files) { barPtr->handleDroppedFiles (files); };
+    return new KnobPanelEditor (*this, apvts, "MIRA  /  analog poly", std::move (rows), juce::Colour (0xff4fd1c5), std::move (extras));
+}
+
+int MiraAudioProcessor::getCurrentProgram()
+{
+    const auto id = presets.getCurrentId();
+    return id.startsWith ("factory:") ? id.fromFirstOccurrenceOf (":", false, false).getIntValue() : 0;
+}
+
+const juce::String MiraAudioProcessor::getProgramName (int index)
+{
+    const auto& factory = getMiraFactoryPresets();
+    return juce::isPositiveAndBelow (index, (int) factory.size()) ? factory[(size_t) index].name : juce::String();
 }
 
 void MiraAudioProcessor::getStateInformation (juce::MemoryBlock& destData)

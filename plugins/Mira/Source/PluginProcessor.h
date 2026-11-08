@@ -2,7 +2,9 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "MiraPresets.h"
 #include "MiraVoice.h"
+#include "dsp/Chorus.h"
 
 /**
     Mira: an 8-voice virtual-analog polysynth aiming for that thick, warm,
@@ -31,10 +33,11 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // Factory presets are exposed to the host as programs.
+    int getNumPrograms() override { return (int) getMiraFactoryPresets().size(); }
+    int getCurrentProgram() override;
+    void setCurrentProgram (int index) override { presets.loadFactory (index); }
+    const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock& destData) override;
@@ -43,6 +46,7 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     juce::AudioProcessorValueTreeState apvts;
+    MiraPresetManager presets { apvts };
 
 private:
     enum VoiceMode { Poly = 0, Mono, Legato };
@@ -60,6 +64,8 @@ private:
     std::array<MiraVoice, numVoices> voices;
     MiraVoiceParams voiceParams;
     sdsp::Lfo lfo;
+    sdsp::Chorus chorus;
+    int chorusMode = 0;
     sdsp::Noise panRng { 0xBADA55u };
 
     std::vector<std::pair<int, float>> monoStack; // (note, velocity), most recent last
