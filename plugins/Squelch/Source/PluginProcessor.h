@@ -5,6 +5,7 @@
 #include "dsp/Envelope.h"
 #include "dsp/LadderFilter.h"
 #include "dsp/Oscillator.h"
+#include "Generator.h"
 #include "Sequencer.h"
 
 /**
@@ -56,6 +57,13 @@ public:
     std::atomic<int> playingPattern { 0 };   // pattern actually playing (changes on the downbeat)
     std::atomic<int> transpose { 0 };        // set by MIDI keys while the sequencer runs
 
+    /** Called from the editor's timer so generator edits apply even when no audio is running. */
+    void pollGenerator()
+    {
+        const juce::SpinLock::ScopedLockType lock (generatorLock);
+        updateGenerator();
+    }
+
 private:
     void handleMidi (const juce::MidiMessage& m);
     void noteOn (int note, int velocity);
@@ -67,6 +75,9 @@ private:
     void processSequencer (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi);
     void sequencerTick (int64_t tick);
     void sequencerStop();
+    gen::Settings readGeneratorSettings() const;
+    void updateGenerator();
+    void evolve();
 
     struct Params
     {
@@ -86,7 +97,23 @@ private:
         std::atomic<float>* length = nullptr;
         std::atomic<float>* tempo = nullptr;
         std::atomic<float>* clock = nullptr;
+        std::atomic<float>* genKey = nullptr;
+        std::atomic<float>* genScale = nullptr;
+        std::atomic<float>* genSeed = nullptr;
+        std::atomic<float>* genDensity = nullptr;
+        std::atomic<float>* genAccent = nullptr;
+        std::atomic<float>* genSlide = nullptr;
+        std::atomic<float>* genRange = nullptr;
+        std::atomic<float>* genEvolve = nullptr;
+        std::atomic<float>* genVariation = nullptr;
     } p;
+
+    // Generator: regenerate when its controls change (but not when a saved set loads).
+    gen::Settings lastGenSettings;
+    juce::SpinLock generatorLock;
+    std::atomic<bool> adoptGeneratorSettings { true };
+    int loopsSinceEvolve = 0, evolveCount = 0;
+    bool firstDownbeat = true;
 
     // Sequencer runtime state (audio thread only)
     bool seqWasOn = false, seqRunning = false, prevSlide = false;

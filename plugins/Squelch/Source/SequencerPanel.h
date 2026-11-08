@@ -212,6 +212,7 @@ private:
 
     void timerCallback() override
     {
+        processor.pollGenerator();
         const auto v = processor.patterns.version.load();
         const int step = processor.currentStep.load();
         const int pat = currentPattern();
@@ -263,7 +264,21 @@ public:
         tempoSlider.setTooltip ("Tempo for the Internal clock (also used when the host has no clock)");
         tempoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, "tempo", tempoSlider);
 
-        randomButton.onClick = [this] { processor.patterns.setPattern (pattern(), seq::randomPattern ((uint32_t) juce::Random::getSystemRandom().nextInt())); };
+        // Generate: jump the generator to a new random Pattern # (in the chosen key and scale).
+        randomButton.setTooltip ("New pattern from the Pattern Generator (uses its Key, Scale, Density...)");
+        randomButton.onClick = [this]
+        {
+            if (auto* seed = processor.apvts.getParameter ("genseed"))
+            {
+                const int current = juce::roundToInt (seed->convertFrom0to1 (seed->getValue()));
+                int next = current;
+                while (next == current)
+                    next = 1 + juce::Random::getSystemRandom().nextInt (9999);
+                seed->beginChangeGesture();
+                seed->setValueNotifyingHost (seed->convertTo0to1 ((float) next));
+                seed->endChangeGesture();
+            }
+        };
         clearButton.onClick = [this]
         {
             std::array<seq::Step, seq::numSteps> blank {};
@@ -314,7 +329,7 @@ public:
         place (lengthBox, 92);
         place (clockBox, 96);
         place (tempoSlider, 96);
-        place (randomButton, 66);
+        place (randomButton, 76);
         place (clearButton, 54);
         place (shiftLeft, 28);
         place (shiftRight, 28);
@@ -340,7 +355,7 @@ private:
     SquelchAudioProcessor& processor;
     StepGrid grid;
 
-    juce::TextButton runButton { "RUN" }, randomButton { "Random" }, clearButton { "Clear" };
+    juce::TextButton runButton { "RUN" }, randomButton { "Generate" }, clearButton { "Clear" };
     juce::TextButton shiftLeft { "<" }, shiftRight { ">" }, copyButton { "Copy" }, pasteButton { "Paste" };
     juce::ComboBox patternBox, lengthBox, clockBox;
     juce::Slider tempoSlider;

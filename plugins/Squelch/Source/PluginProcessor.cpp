@@ -22,6 +22,15 @@ static const juce::String pattern   { "pattern" };
 static const juce::String length    { "length" };
 static const juce::String tempo     { "tempo" };
 static const juce::String clock     { "clock" };
+static const juce::String genKey    { "genkey" };
+static const juce::String genScale  { "genscale" };
+static const juce::String genSeed   { "genseed" };
+static const juce::String genDensity { "gendensity" };
+static const juce::String genAccent { "genaccent" };
+static const juce::String genSlide  { "genslide" };
+static const juce::String genRange  { "genrange" };
+static const juce::String genEvolve { "genevolve" };
+static const juce::String genVariation { "genvariation" };
 } // namespace ids
 
 namespace
@@ -52,6 +61,15 @@ SquelchAudioProcessor::SquelchAudioProcessor()
     p.length    = apvts.getRawParameterValue (ids::length);
     p.tempo     = apvts.getRawParameterValue (ids::tempo);
     p.clock     = apvts.getRawParameterValue (ids::clock);
+    p.genKey       = apvts.getRawParameterValue (ids::genKey);
+    p.genScale     = apvts.getRawParameterValue (ids::genScale);
+    p.genSeed      = apvts.getRawParameterValue (ids::genSeed);
+    p.genDensity   = apvts.getRawParameterValue (ids::genDensity);
+    p.genAccent    = apvts.getRawParameterValue (ids::genAccent);
+    p.genSlide     = apvts.getRawParameterValue (ids::genSlide);
+    p.genRange     = apvts.getRawParameterValue (ids::genRange);
+    p.genEvolve    = apvts.getRawParameterValue (ids::genEvolve);
+    p.genVariation = apvts.getRawParameterValue (ids::genVariation);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SquelchAudioProcessor::createParameterLayout()
@@ -77,6 +95,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout SquelchAudioProcessor::creat
     layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::seqOn, 1 }, "Sequencer", false));
     layout.add (makeChoice (ids::pattern, "Pattern", patternNames, 0));
     layout.add (makeChoice (ids::length,  "Length", lengthNames, seq::numSteps - 1));
+    layout.add (makeChoice (ids::genKey,       "Key", gen::keyNames(), 0));
+    layout.add (makeChoice (ids::genScale,     "Scale", gen::scaleNames(), 0));
+    layout.add (makeInt    (ids::genSeed,      "Pattern #", 1, 9999, 1));
+    layout.add (makeFloat  (ids::genDensity,   "Density", 0.0f, 1.0f, 0.75f, percent()));
+    layout.add (makeFloat  (ids::genAccent,    "Accents", 0.0f, 1.0f, 0.4f, percent()));
+    layout.add (makeFloat  (ids::genSlide,     "Slides", 0.0f, 1.0f, 0.35f, percent()));
+    layout.add (makeFloat  (ids::genRange,     "Octaves", 0.0f, 1.0f, 0.4f, percent()));
+    layout.add (makeChoice (ids::genEvolve,    "Evolve", { "Off", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars" }, 0));
+    layout.add (makeFloat  (ids::genVariation, "Variation", 0.0f, 1.0f, 0.25f, percent()));
     layout.add (makeChoice (ids::clock,   "Clock", { "Host", "Internal" }, 0));
     layout.add (makeFloat  (ids::tempo,   "Tempo", 60.0f, 200.0f, 125.0f,
                             Attr().withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " BPM"; })));
@@ -124,6 +151,11 @@ void SquelchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+    {
+        const juce::SpinLock::ScopedTryLockType lock (generatorLock);
+        if (lock.isLocked())
+            updateGenerator();
+    }
 
     const bool seqOn = p.seqOn->load() > 0.5f;
     if (seqOn != seqWasOn)
@@ -311,7 +343,10 @@ void SquelchAudioProcessor::sequencerTick (int64_t tick)
 
     // Pattern changes wait for the downbeat, like the original.
     if (stepStart && step == 0)
+    {
         activePattern = (int) p.pattern->load();
+        evolve();
+    }
     playingPattern.store (activePattern);
 
     const auto s = patterns.get (activePattern, step);
@@ -363,6 +398,64 @@ void SquelchAudioProcessor::sequencerTick (int64_t tick)
     }
 }
 
+//==============================================================================
+// Pattern generator
+
+gen::Settings SquelchAudioProcessor::readGeneratorSettings() const
+{
+    gen::Settings g;
+    g.key = (int) p.genKey->load();
+    g.scale = (int) p.genScale->load();
+    g.seed = (int) p.genSeed->load();
+    g.density = p.genDensity->load();
+    g.accent = p.genAccent->load();
+    g.slide = p.genSlide->load();
+    g.range = p.genRange->load();
+    return g;
+}
+
+void SquelchAudioProcessor::updateGenerator()
+{
+    const auto settings = readGeneratorSettings();
+    if (adoptGeneratorSettings.exchange (false))
+    {
+        // Plugin just loaded / a set was restored: keep the saved patterns as they are.
+        lastGenSettings = settings;
+        return;
+    }
+    if (settings != lastGenSettings)
+    {
+        lastGenSettings = settings;
+        evolveCount = 0;
+        patterns.setPattern ((int) p.pattern->load(), gen::generate (settings));
+    }
+}
+
+void SquelchAudioProcessor::evolve()
+{
+    static constexpr int barsPerEvolve[] = { 0, 1, 2, 4, 8, 16 };
+    const int bars = barsPerEvolve[juce::jlimit (0, 5, (int) p.genEvolve->load())];
+
+    if (firstDownbeat || bars == 0)
+    {
+        firstDownbeat = false;
+        loopsSinceEvolve = 0;
+        return;
+    }
+    if (++loopsSinceEvolve < bars)
+        return;
+    loopsSinceEvolve = 0;
+
+    // Blend a new pattern (from a seed derived from Pattern #) into the playing one.
+    ++evolveCount;
+    auto settings = readGeneratorSettings();
+    settings.seed = (int) (((uint32_t) settings.seed * 7919u + (uint32_t) evolveCount * 104729u) & 0x7fffffffu);
+    std::array<seq::Step, seq::numSteps> current {};
+    for (int i = 0; i < seq::numSteps; ++i)
+        current[(size_t) i] = patterns.get (activePattern, i);
+    patterns.setPattern (activePattern, gen::mutate (current, gen::generate (settings), p.genVariation->load(), settings.seed));
+}
+
 void SquelchAudioProcessor::reset()
 {
     sequencerStop();
@@ -376,6 +469,7 @@ void SquelchAudioProcessor::sequencerStop()
     seqNote = -1;
     prevSlide = false;
     seqRunning = false;
+    firstDownbeat = true;
     currentStep.store (-1);
     allNotesOff();
 }
@@ -455,6 +549,8 @@ juce::AudioProcessorEditor* SquelchAudioProcessor::createEditor()
           { "Filter",     { ids::cutoff, ids::resonance, ids::envMod, ids::decay, ids::accent } } },
         { { "Performance", { ids::slide, ids::accentVel } },
           { "Output",      { ids::drive, ids::volume } } },
+        { { "Pattern Generator", { ids::genKey, ids::genScale, ids::genSeed, ids::genDensity, ids::genAccent,
+                                   ids::genSlide, ids::genRange, ids::genEvolve, ids::genVariation } } },
     };
     EditorExtras extras;
     extras.footer = std::make_unique<SequencerPanel> (*this);
@@ -487,6 +583,7 @@ void SquelchAudioProcessor::setStateInformation (const void* data, int sizeInByt
                 if (bank.hasProperty ("p" + juce::String (i)))
                     patterns.deserialise (i, bank["p" + juce::String (i)].toString());
             apvts.replaceState (state);
+            adoptGeneratorSettings.store (true);
         }
 }
 

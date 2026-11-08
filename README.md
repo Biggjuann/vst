@@ -52,7 +52,23 @@ Controls along the top:
 | **Pattern 1–8** | 8 patterns per instance. Patterns 1–4 are demo lines and 5–8 are random. A pattern change waits for the downbeat. You can automate it in Ableton. |
 | **Length** | 1–16 steps. |
 | **Clock** | *Host sync* follows Ableton's transport and tempo; this is what you'll normally use. *Internal* runs at the Tempo setting whenever RUN is on, even with Ableton stopped, which is good for auditioning. |
-| **Random / Clear / < > / Copy / Paste** | Generate, wipe, rotate and duplicate patterns. |
+| **Generate / Clear / < > / Copy / Paste** | New generated pattern, wipe, rotate and duplicate patterns. |
+
+### Pattern generator
+The **Pattern Generator** row writes acid lines into the selected pattern, and every pattern is in the key and scale you pick.
+
+| Control | What it does |
+|---|---|
+| **Key / Scale** | Root note, and the scale to use: Minor, Major, Dorian, Phrygian, Harmonic Minor, Phrygian Dominant, Minor or Major Pentatonic, Blues, or Chromatic. |
+| **Pattern #** | 9,999 repeatable patterns. Turn it to browse; the same number always gives the same line. **Generate** (sequencer bar) jumps to a random one. |
+| **Density** | How many steps play a note versus rests and ties. |
+| **Accents / Slides / Octaves** | How many accents, slides and octave jumps there are. |
+| **Evolve** | Every 1–16 bars, part of the playing pattern is regenerated, so it changes endlessly. |
+| **Variation** | How much each Evolve changes: low values give subtle mutations, 100% gives a brand-new line each time. |
+
+Each control changes only its own part of the pattern. Turning up Accents adds accents and leaves the melody alone. Changing Key transposes the same line into the new key.
+
+Moving any generator control rewrites the selected pattern, so copy anything you want to keep into another pattern slot first. Loading a saved Ableton set never regenerates; your saved patterns stay as they were.
 
 **Transpose**: while the sequencer runs, playing a MIDI note transposes the pattern, and the transpose stays latched. C3 means no transpose. Put a one-note-per-bar clip on the track to sequence key changes.
 
@@ -100,9 +116,9 @@ I tested the importer on 9,015 real Diva presets. All of them converted. When I 
 CMakeLists.txt              top-level build (fetches JUCE 8)
 shared/dsp/                 reusable DSP: oscillators, ladder filter, envelopes, LFO, chorus
 shared/ui/                  data-driven knob-panel editor + parameter helpers
-plugins/Squelch/            acid bass + step sequencer (Sequencer.h, SequencerPanel.h)
+plugins/Squelch/            acid bass + step sequencer (Sequencer.h, SequencerPanel.h) + generator (Generator.h)
 plugins/Mira/               poly synth, presets (MiraPresets.cpp), Diva importer (DivaImporter.cpp)
-tests/                      developer tools, e.g. DivaConvert (cmake -DHOMEBREW_BUILD_TESTS=ON)
+tests/                      developer tools: DivaConvert, GeneratorTest (cmake -DHOMEBREW_BUILD_TESTS=ON)
 .github/workflows/build.yml CI that builds the Windows VST3s
 ```
 
