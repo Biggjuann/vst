@@ -78,6 +78,25 @@ Patterns are saved inside your Ableton set.
 
 To use it in Ableton: put Squelch on a MIDI track, press **RUN** (with Clock on *Host sync*), and press play in Ableton.
 
+### Favorites
+The **♥ Favorites** menu in Squelch's title bar holds your saved favorites, and **Save** adds new ones. There are two kinds:
+- **Sound** saves everything: knobs, generator settings and all 8 patterns. Loading one leaves RUN, Clock, Tempo and MIDI Out as they are, so playback isn't interrupted.
+- **Pattern** saves just the selected pattern and its length. Loading one replaces the currently selected pattern slot.
+
+Favorites are stored in `%APPDATA%\Homebrew\Squelch\Favorites`. They work across all your Ableton projects, and **Open favorites folder** takes you there for backups.
+
+### Getting the sequence into Ableton as MIDI
+**Drag MIDI** (easiest): drag the **⇩ Drag MIDI** tile onto a MIDI track or clip slot to drop in the selected pattern as a clip. Click the tile to choose 1–16 bars or to save a `.mid` file. When **Evolve** is on, the clip already includes the changes Evolve would make over those bars.
+
+**Record live** (captures your knob-tweaking performance of transposes and pattern changes):
+1. Leave **MIDI Out** on (top right). Squelch then sends its sequencer notes out as MIDI.
+2. Make a new MIDI track. Set its **MIDI From** to the Squelch track, and the chooser below it to **Squelch**.
+3. Arm that track and record while Squelch's sequencer plays.
+
+Live doesn't route MIDI out of every VST3 instrument. If Squelch isn't listed under MIDI From, use Drag MIDI instead.
+
+Either way, accents come out at velocity 127 and other notes just below *Accent Vel*. Slides are written as slightly overlapping notes. Playing the clip back into Squelch (with RUN off) therefore reproduces the same accents and slides.
+
 ### Playing it from a MIDI clip instead (RUN off)
 - **Slide**: make a note overlap the start of the next one. The pitch glides (time set by *Slide Time*) and the envelopes don't retrigger.
 - **Accent**: notes with velocity ≥ *Accent Vel* (default 100) are accented: louder, with a snappier, brighter filter sweep. Several accents in a row build up the resonant "wow".
@@ -145,11 +164,11 @@ I tested the importer on 9,015 real Diva presets. All of them converted. When I 
 CMakeLists.txt              top-level build (fetches JUCE 8)
 shared/dsp/                 reusable DSP: oscillators, ladder filter, envelopes, LFO, chorus
 shared/ui/                  data-driven knob-panel editor + parameter helpers
-plugins/Squelch/            acid bass + step sequencer (Sequencer.h, SequencerPanel.h) + generator (Generator.h)
+plugins/Squelch/            acid bass + step sequencer (Sequencer.h, SequencerPanel.h), generator (Generator.h), favorites & MIDI export (FavoritesBar.h)
 plugins/Octo/, plugins/Nona/ drum machines (Kit808.h / Kit909.h voice models)
 shared/drums/               drum engine: sequencer, pattern bank, step grid, drum DSP blocks
 plugins/Mira/               poly synth, presets (MiraPresets.cpp), Diva importer (DivaImporter.cpp)
-tests/                      developer tools: DivaConvert, GeneratorTest (cmake -DHOMEBREW_BUILD_TESTS=ON)
+tests/                      developer tools: DivaConvert, GeneratorTest, SquelchTest (cmake -DHOMEBREW_BUILD_TESTS=ON)
 .github/workflows/build.yml CI that builds the Windows VST3s
 ```
 

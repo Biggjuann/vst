@@ -282,6 +282,7 @@ private:
     std::map<juce::String, std::unique_ptr<Control>> controls;
     std::vector<SectionBox> sectionBoxes;
     EditorExtras extras;
+    juce::TooltipWindow tooltips { this, 700 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KnobPanelEditor)
 };

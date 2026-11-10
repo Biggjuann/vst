@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 
+#include "FavoritesBar.h"
 #include "SequencerPanel.h"
 #include "ui/KnobPanelEditor.h"
 #include "ui/ParamHelpers.h"
@@ -31,6 +32,7 @@ static const juce::String genSlide  { "genslide" };
 static const juce::String genRange  { "genrange" };
 static const juce::String genEvolve { "genevolve" };
 static const juce::String genVariation { "genvariation" };
+static const juce::String midiOut   { "midiout" };
 } // namespace ids
 
 namespace
@@ -70,6 +72,7 @@ SquelchAudioProcessor::SquelchAudioProcessor()
     p.genRange     = apvts.getRawParameterValue (ids::genRange);
     p.genEvolve    = apvts.getRawParameterValue (ids::genEvolve);
     p.genVariation = apvts.getRawParameterValue (ids::genVariation);
+    p.midiOut      = apvts.getRawParameterValue (ids::midiOut);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SquelchAudioProcessor::createParameterLayout()
@@ -104,6 +107,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SquelchAudioProcessor::creat
     layout.add (makeFloat  (ids::genRange,     "Octaves", 0.0f, 1.0f, 0.4f, percent()));
     layout.add (makeChoice (ids::genEvolve,    "Evolve", { "Off", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars" }, 0));
     layout.add (makeFloat  (ids::genVariation, "Variation", 0.0f, 1.0f, 0.25f, percent()));
+    layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { ids::midiOut, 1 }, "MIDI Out", true));
     layout.add (makeChoice (ids::clock,   "Clock", { "Host", "Internal" }, 0));
     layout.add (makeFloat  (ids::tempo,   "Tempo", 60.0f, 200.0f, 125.0f,
                             Attr().withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " BPM"; })));
@@ -130,6 +134,8 @@ void SquelchAudioProcessor::prepareToPlay (double sampleRate, int)
 
     heldNotes.clear();
     heldNotes.reserve (128);
+    midiOutput.ensureSize (4096);
+    numPendingOffs = 0;
     internalPpq = 0.0;
     seqRunning = false;
     sliding = accented = false;
@@ -148,6 +154,52 @@ void SquelchAudioProcessor::prepareToPlay (double sampleRate, int)
 }
 
 void SquelchAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    // MIDI out: note-offs scheduled in earlier blocks land first, then whatever the sequencer plays.
+    midiOutput.clear();
+    blockSize = buffer.getNumSamples();
+    for (int i = 0; i < numPendingOffs;)
+    {
+        auto& off = pendingOffs[(size_t) i];
+        if (off.samplesLeft < blockSize)
+        {
+            midiOutput.addEvent (juce::MidiMessage::noteOff (1, off.note), juce::jmax (0, off.samplesLeft));
+            pendingOffs[(size_t) i] = pendingOffs[(size_t) --numPendingOffs];
+        }
+        else
+        {
+            off.samplesLeft -= blockSize;
+            ++i;
+        }
+    }
+
+    inBlock = true;
+    tickSample = 0;
+    processInternal (buffer, midi);
+    inBlock = false;
+
+    if (p.midiOut->load() > 0.5f)
+        midi.swapWith (midiOutput);
+    else
+        midi.clear();
+}
+
+void SquelchAudioProcessor::emitNoteOn (int note, bool accent)
+{
+    if (inBlock)
+        midiOutput.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) (accent ? accentVelocity : normalVelocity())), tickSample);
+}
+
+void SquelchAudioProcessor::emitNoteOff (int note, int delaySamples)
+{
+    const int at = (inBlock ? tickSample : 0) + delaySamples;
+    if (inBlock && at < blockSize)
+        midiOutput.addEvent (juce::MidiMessage::noteOff (1, note), at);
+    else if (numPendingOffs < (int) pendingOffs.size())
+        pendingOffs[(size_t) numPendingOffs++] = { note, inBlock ? at - blockSize : at };
+}
+
+void SquelchAudioProcessor::processInternal (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
@@ -322,6 +374,7 @@ void SquelchAudioProcessor::processSequencer (juce::AudioBuffer<float>& buffer, 
             render (buffer, position, at - position);
             position = at;
         }
+        tickSample = at;
         sequencerTick (tick);
         lastTick = tick;
     }
@@ -358,7 +411,10 @@ void SquelchAudioProcessor::sequencerTick (int64_t tick)
         if (s.time == seq::Rest)
         {
             if (seqNote >= 0)
+            {
                 noteOff (seqNote);
+                emitNoteOff (seqNote);
+            }
             seqNote = -1;
             prevSlide = false;
             return;
@@ -376,13 +432,22 @@ void SquelchAudioProcessor::sequencerTick (int64_t tick)
         {
             startNote (note, s.accent); // legato: glides, no envelope retrigger
             if (note != seqNote)
+            {
                 noteOff (seqNote);
+                // MIDI out: overlap the notes slightly so the recorded clip replays as a slide.
+                emitNoteOn (note, s.accent);
+                emitNoteOff (seqNote, (int) (0.006 * sr));
+            }
         }
         else
         {
             if (seqNote >= 0)
+            {
                 noteOff (seqNote);
+                emitNoteOff (seqNote);
+            }
             startNote (note, s.accent);
+            emitNoteOn (note, s.accent);
         }
         seqNote = note;
         prevSlide = s.slide;
@@ -393,6 +458,7 @@ void SquelchAudioProcessor::sequencerTick (int64_t tick)
         if (! holdGate)
         {
             noteOff (seqNote);
+            emitNoteOff (seqNote);
             seqNote = -1;
         }
     }
@@ -447,13 +513,8 @@ void SquelchAudioProcessor::evolve()
     loopsSinceEvolve = 0;
 
     // Blend a new pattern (from a seed derived from Pattern #) into the playing one.
-    ++evolveCount;
-    auto settings = readGeneratorSettings();
-    settings.seed = (int) (((uint32_t) settings.seed * 7919u + (uint32_t) evolveCount * 104729u) & 0x7fffffffu);
-    std::array<seq::Step, seq::numSteps> current {};
-    for (int i = 0; i < seq::numSteps; ++i)
-        current[(size_t) i] = patterns.get (activePattern, i);
-    patterns.setPattern (activePattern, gen::mutate (current, gen::generate (settings), p.genVariation->load(), settings.seed));
+    const int index = ++evolveCount;
+    patterns.setPattern (activePattern, gen::evolve (getPatternSteps (activePattern), readGeneratorSettings(), index, p.genVariation->load()));
 }
 
 void SquelchAudioProcessor::reset()
@@ -465,7 +526,10 @@ void SquelchAudioProcessor::reset()
 void SquelchAudioProcessor::sequencerStop()
 {
     if (seqNote >= 0)
+    {
         noteOff (seqNote);
+        emitNoteOff (seqNote);
+    }
     seqNote = -1;
     prevSlide = false;
     seqRunning = false;
@@ -556,10 +620,12 @@ juce::AudioProcessorEditor* SquelchAudioProcessor::createEditor()
     extras.footer = std::make_unique<SequencerPanel> (*this);
     extras.footerHeight = SequencerPanel::preferredHeight;
     extras.footerMinWidth = SequencerPanel::minimumWidth;
+    extras.titleBar = std::make_unique<FavoritesBar> (*this);
+    extras.titleBarWidth = FavoritesBar::preferredWidth;
     return new KnobPanelEditor (*this, apvts, "SQUELCH  /  acid bass", std::move (rows), juce::Colour (0xffffa62b), std::move (extras));
 }
 
-void SquelchAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree SquelchAudioProcessor::createFullState()
 {
     auto state = apvts.copyState();
     state.removeChild (state.getChildWithName ("PATTERNS"), nullptr);
@@ -567,9 +633,162 @@ void SquelchAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     for (int i = 0; i < seq::numPatterns; ++i)
         bank.setProperty ("p" + juce::String (i), patterns.serialise (i), nullptr);
     state.appendChild (bank, nullptr);
+    return state;
+}
 
-    if (auto xml = state.createXml())
+void SquelchAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = createFullState().createXml())
         copyXmlToBinary (*xml, destData);
+}
+
+//==============================================================================
+// Favorites
+
+std::array<seq::Step, seq::numSteps> SquelchAudioProcessor::getPatternSteps (int pattern) const
+{
+    std::array<seq::Step, seq::numSteps> steps {};
+    for (int i = 0; i < seq::numSteps; ++i)
+        steps[(size_t) i] = patterns.get (pattern, i);
+    return steps;
+}
+
+std::unique_ptr<juce::XmlElement> SquelchAudioProcessor::createSoundFavorite (const juce::String& name)
+{
+    auto xml = createFullState().createXml();
+    if (xml != nullptr)
+        xml->setAttribute ("favoriteName", name);
+    return xml;
+}
+
+bool SquelchAudioProcessor::loadSoundFavorite (const juce::XmlElement& xml)
+{
+    if (! xml.hasTagName (apvts.state.getType()))
+        return false;
+
+    const auto state = juce::ValueTree::fromXml (xml);
+    // Hold the generator lock so it doesn't "regenerate" over the patterns we're loading.
+    const juce::SpinLock::ScopedLockType lock (generatorLock);
+
+    for (const auto& child : state)
+    {
+        const auto id = child["id"].toString();
+        // Leave the transport alone: loading a favorite shouldn't start/stop or retime playback.
+        if (id.isEmpty() || id == ids::seqOn || id == ids::clock || id == ids::tempo || id == ids::midiOut)
+            continue;
+        if (auto* param = apvts.getParameter (id))
+            param->setValueNotifyingHost (param->convertTo0to1 ((float) child["value"]));
+    }
+
+    const auto bank = state.getChildWithName ("PATTERNS");
+    for (int i = 0; i < seq::numPatterns; ++i)
+        if (bank.hasProperty ("p" + juce::String (i)))
+            patterns.deserialise (i, bank["p" + juce::String (i)].toString());
+
+    adoptGeneratorSettings.store (true);
+    return true;
+}
+
+void SquelchAudioProcessor::loadIntoCurrentPattern (const std::array<seq::Step, seq::numSteps>& steps, int length)
+{
+    patterns.setPattern (getSelectedPattern(), steps);
+    if (auto* param = apvts.getParameter (ids::length))
+        param->setValueNotifyingHost (param->convertTo0to1 ((float) (juce::jlimit (1, seq::numSteps, length) - 1)));
+}
+
+//==============================================================================
+// MIDI export: the same rules as the live sequencer, written out as a clip.
+
+juce::MidiFile SquelchAudioProcessor::createMidiClip (int bars) const
+{
+    constexpr int ticksPerQuarter = 960, stepTicks = ticksPerQuarter / 4, halfStep = stepTicks / 2;
+    constexpr int slideOverlap = 12; // a few ms, so the clip replays as a slide
+
+    static constexpr int barsPerEvolve[] = { 0, 1, 2, 4, 8, 16 };
+    const int evolveEvery = barsPerEvolve[juce::jlimit (0, 5, (int) p.genEvolve->load())];
+    const auto settings = readGeneratorSettings();
+    const float variation = p.genVariation->load();
+    const int length = getLength();
+    const int shift = transpose.load();
+    const int normalVel = normalVelocity();
+
+    auto steps = getPatternSteps (getSelectedPattern());
+    int evolveIndex = evolveCount.load(), loops = 0;
+
+    juce::MidiMessageSequence sequence;
+    auto on = [&] (int note, int tick, bool accent)
+    {
+        sequence.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) (accent ? accentVelocity : normalVel)), tick);
+    };
+    auto off = [&] (int note, int tick) { sequence.addEvent (juce::MidiMessage::noteOff (1, note), tick); };
+
+    int current = -1;
+    bool prevSlideOut = false;
+    const int totalSteps = bars * seq::numSteps;
+    for (int s = 0; s < totalSteps; ++s)
+    {
+        const int step = s % length;
+        if (step == 0 && s > 0 && evolveEvery > 0 && ++loops % evolveEvery == 0)
+            steps = gen::evolve (steps, settings, ++evolveIndex, variation);
+
+        const auto& st = steps[(size_t) step];
+        const auto& next = steps[(size_t) ((step + 1) % length)];
+        const int t = s * stepTicks;
+
+        if (st.time == seq::Rest)
+        {
+            if (current >= 0) off (current, t);
+            current = -1;
+            prevSlideOut = false;
+        }
+        else if (st.time == seq::Tie)
+        {
+            prevSlideOut = current >= 0 && st.slide;
+        }
+        else
+        {
+            const int note = st.midiNote (shift);
+            if (prevSlideOut && current >= 0)
+            {
+                if (note != current)
+                {
+                    on (note, t, st.accent);
+                    off (current, t + slideOverlap);
+                }
+            }
+            else
+            {
+                if (current >= 0) off (current, t);
+                on (note, t, st.accent);
+            }
+            current = note;
+            prevSlideOut = st.slide;
+        }
+
+        // Half-step: the gate closes unless this step slides or the next one is a tie.
+        if (current >= 0 && st.time != seq::Rest && ! (st.slide || next.time == seq::Tie))
+        {
+            off (current, t + halfStep);
+            current = -1;
+        }
+    }
+    if (current >= 0)
+        off (current, totalSteps * stepTicks);
+
+    sequence.sort();
+    sequence.updateMatchedPairs();
+
+    juce::MidiMessageSequence track;
+    track.addEvent (juce::MidiMessage::textMetaEvent (3, "Squelch Pattern " + juce::String (getSelectedPattern() + 1)), 0);
+    track.addEvent (juce::MidiMessage::timeSignatureMetaEvent (4, 4), 0);
+    track.addSequence (sequence, 0);
+    track.addEvent (juce::MidiMessage::endOfTrack(), totalSteps * stepTicks);
+    track.updateMatchedPairs();
+
+    juce::MidiFile file;
+    file.setTicksPerQuarterNote (ticksPerQuarter);
+    file.addTrack (track);
+    return file;
 }
 
 void SquelchAudioProcessor::setStateInformation (const void* data, int sizeInBytes)

@@ -200,4 +200,11 @@ inline std::array<seq::Step, seq::numSteps> mutate (const std::array<seq::Step, 
         out[0] = fresh[0].time == seq::Note ? fresh[0] : current[0];
     return out;
 }
+/** One Evolve step: the pattern after evolution number `evolveIndex` (shared by playback and MIDI export). */
+inline std::array<seq::Step, seq::numSteps> evolve (const std::array<seq::Step, seq::numSteps>& current,
+                                                    Settings settings, int evolveIndex, float variation)
+{
+    settings.seed = (int) (((uint32_t) settings.seed * 7919u + (uint32_t) evolveIndex * 104729u) & 0x7fffffffu);
+    return mutate (current, generate (settings), variation, settings.seed);
+}
 } // namespace gen

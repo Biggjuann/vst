@@ -10,3 +10,10 @@ target_sources(GeneratorTest PRIVATE GeneratorTest.cpp)
 target_include_directories(GeneratorTest PRIVATE ../plugins/Squelch/Source)
 target_compile_definitions(GeneratorTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(GeneratorTest PRIVATE juce::juce_core PUBLIC juce::juce_recommended_config_flags)
+
+# Drives Squelch's processor directly: MIDI out vs. exported clip, replay, favorites.
+juce_add_console_app(SquelchTest PRODUCT_NAME "SquelchTest")
+target_sources(SquelchTest PRIVATE SquelchTest.cpp ../plugins/Squelch/Source/PluginProcessor.cpp)
+target_include_directories(SquelchTest PRIVATE ../plugins/Squelch/Source)
+target_compile_definitions(SquelchTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 "JucePlugin_Name=\"Squelch\"")
+target_link_libraries(SquelchTest PRIVATE synth_shared juce::juce_audio_utils PUBLIC juce::juce_recommended_config_flags)
